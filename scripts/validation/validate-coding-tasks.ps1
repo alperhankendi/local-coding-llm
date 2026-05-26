@@ -29,12 +29,15 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 $systemPrompt = @'
 You are a precise coding agent. When asked to produce files:
-- Output one fenced code block per file, no prose around it.
-- The first line inside each block must be a comment containing ONLY the exact filename, for example:
+- Wrap EACH file in a triple-backtick fenced code block: ```lang ... ``` (the fences are required, do not omit them).
+- The first line INSIDE each block must be a comment containing ONLY the exact filename, for example:
+    ```python
     # fizzbuzz.py
-    // app.js
+    for i in range(...):
+        ...
+    ```
 - Do not nest code blocks. Do not split a single file across multiple blocks.
-- Do not include any text outside of code blocks.
+- Do not include any explanatory prose between or around the code blocks.
 '@
 
 $fixtures = Get-ChildItem -Directory $fixturesRoot | Sort-Object Name
@@ -58,10 +61,21 @@ foreach ($fix in $fixtures) {
     $outDir = Join-Path $runRoot $name
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
-    # Copy any input/ files into the working dir
+    # Copy any input/ files into the working dir AND include their contents in the prompt
+    # so the model can actually see them (without this, refactor/bug-fix tasks have no context).
     $inputDir = Join-Path $fix.FullName 'input'
     if (Test-Path $inputDir) {
         Copy-Item -Path (Join-Path $inputDir '*') -Destination $outDir -Recurse -Force
+
+        $contextBlocks = @()
+        foreach ($f in Get-ChildItem $inputDir -File -Recurse) {
+            $rel = $f.FullName.Substring($inputDir.Length).TrimStart('\','/')
+            $body = Get-Content -Raw $f.FullName
+            $contextBlocks += "File ``$rel`` (existing, for reference only, do not rewrite unless asked):`n``````n$body`n``````"
+        }
+        if ($contextBlocks.Count -gt 0) {
+            $prompt = ($contextBlocks -join "`n`n") + "`n`n---`n`n" + $prompt
+        }
     }
 
     # Call the model
@@ -135,6 +149,31 @@ foreach ($fix in $fixtures) {
         Set-Content -Path $dest -Value $bodyToWrite -Encoding UTF8 -NoNewline
         Write-Host "  wrote $fname ($($bodyToWrite.Length) chars)"
         $wroteAny = $true
+    }
+
+    # Fallback: no fenced blocks were found. Try to detect raw "# filename\n<code>" sections
+    # (some models, especially when told "no prose outside code blocks", omit the fences).
+    if (-not $wroteAny) {
+        $sectionMatches = [regex]::Matches($content, '(?m)^[#/]+\s*([\w\.\-_/]+\.[\w]+)\s*$')
+        for ($i = 0; $i -lt $sectionMatches.Count; $i++) {
+            $sm = $sectionMatches[$i]
+            $fname = $sm.Groups[1].Value
+            $bodyStart = $sm.Index + $sm.Length
+            $bodyEnd = if ($i + 1 -lt $sectionMatches.Count) { $sectionMatches[$i + 1].Index } else { $content.Length }
+            $body = $content.Substring($bodyStart, $bodyEnd - $bodyStart)
+
+            # Strip stray fence lines (some models close with ``` without opening).
+            $bodyLines = $body -split "`r?`n"
+            $bodyLines = $bodyLines | Where-Object { $_ -notmatch '^\s*```[\w-]*\s*$' }
+            $body = ($bodyLines -join "`n").Trim("`r","`n")
+
+            $dest    = Join-Path $outDir $fname
+            $destDir = Split-Path $dest -Parent
+            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+            Set-Content -Path $dest -Value $body -Encoding UTF8 -NoNewline
+            Write-Host "  wrote $fname ($($body.Length) chars, raw mode)"
+            $wroteAny = $true
+        }
     }
 
     if (-not $wroteAny) {
