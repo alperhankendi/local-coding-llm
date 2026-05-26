@@ -1,0 +1,9 @@
+Refactor the file messy.py so that:
+- All existing tests in test_messy.py still pass without modification.
+- Functions are smaller and have clearer names.
+- Obvious dead code (no-op loops, useless self-assignments) is removed.
+- Raise specific exception types (ValueError, ZeroDivisionError) instead of bare Exception.
+
+Output exactly one fenced Python code block containing the new contents of messy.py. The first line inside the block must be a comment with the exact filename: # messy.py
+
+Do not output the test file. Do not output explanatory prose.

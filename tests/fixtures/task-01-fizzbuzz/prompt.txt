@@ -1,0 +1,9 @@
+Produce a single Python file named fizzbuzz.py that, when executed, prints the FizzBuzz sequence from 1 through 100 inclusive, one value per line.
+
+Rules:
+- Multiples of 3 print Fizz.
+- Multiples of 5 print Buzz.
+- Multiples of both print FizzBuzz.
+- Other numbers print the number itself.
+
+Output exactly one fenced Python code block. The first line inside the block must be a comment with the exact filename: # fizzbuzz.py

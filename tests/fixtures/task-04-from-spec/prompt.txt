@@ -1,0 +1,26 @@
+Build a single Python file csv_group.py with the following CLI:
+
+Usage: python csv_group.py --by COLUMN
+
+Reads CSV data from stdin (header row required). Groups rows by the value in COLUMN. Prints, in alphabetical order of group key, one line per group of the form:
+
+GROUP_KEY: COUNT
+
+Example, given input:
+    name,team
+    alice,red
+    bob,blue
+    carol,red
+
+Running: python csv_group.py --by team
+Should print:
+    blue: 1
+    red: 2
+
+Rules:
+- Use only the Python standard library (argparse, csv, sys).
+- Exit 1 with an error to stderr if the column does not exist or stdin is empty.
+
+Output exactly one fenced Python code block. The first line inside the block must be a comment with the exact filename: # csv_group.py
+
+Do not output explanatory prose.

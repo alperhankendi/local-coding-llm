@@ -1,0 +1,5 @@
+The file calculator.py has a bug. Running pytest on test_calculator.py shows one failing test: test_avg_non_integer_result. Fix the bug with the minimum change possible. Do not modify any other behavior. Do not touch the test file.
+
+Output exactly one fenced Python code block containing the new contents of calculator.py. The first line inside the block must be a comment with the exact filename: # calculator.py
+
+Do not output the test file. Do not output explanatory prose.
