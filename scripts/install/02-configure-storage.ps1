@@ -27,6 +27,15 @@ $envName     = 'OLLAMA_MODELS'
 $apiUrl      = 'http://localhost:11434/api/tags'
 $ollamaExe   = 'C:\Users\ahank\AppData\Local\Programs\Ollama\ollama.exe'
 
+# Additional Ollama runtime env vars for performance:
+#   OLLAMA_FLASH_ATTENTION = 1     - enables flash attention (CUDA), faster prefill, no quality loss
+#   OLLAMA_KV_CACHE_TYPE   = q8_0  - quantizes KV cache to 8-bit, halves VRAM use of cache,
+#                                    perplexity delta ~0.004 vs f16 (noise)
+$runtimeEnv = @{
+    'OLLAMA_FLASH_ATTENTION' = '1'
+    'OLLAMA_KV_CACHE_TYPE'   = 'q8_0'
+}
+
 # Refresh PATH from registry
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + `
             [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -53,17 +62,24 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] `
     [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 
+# Track whether we changed any registry value in this run. If yes, we MUST restart
+# Ollama even if its API is up, otherwise the already-running process won't pick up
+# the new env.
+$changedAny = $false
+
 if ($isAdmin) {
     $currentMachine = [Environment]::GetEnvironmentVariable($envName, 'Machine')
     if ($currentMachine -ne $targetPath) {
         Write-Host "Setting $envName = $targetPath (Machine scope, admin)"
         [Environment]::SetEnvironmentVariable($envName, $targetPath, 'Machine')
+        $changedAny = $true
     }
     # Clear conflicting User scope value if any (User overrides Machine for user processes)
     $currentUser = [Environment]::GetEnvironmentVariable($envName, 'User')
     if ($currentUser -and $currentUser -ne $targetPath) {
         Write-Host "Clearing conflicting $envName User scope value (was: '$currentUser')"
         [Environment]::SetEnvironmentVariable($envName, $null, 'User')
+        $changedAny = $true
     }
 } else {
     Write-Host "Note: not running elevated. Setting $envName in User scope only."
@@ -73,12 +89,39 @@ if ($isAdmin) {
     if ($currentUser -ne $targetPath) {
         Write-Host "Setting $envName = $targetPath (User scope)"
         [Environment]::SetEnvironmentVariable($envName, $targetPath, 'User')
+        $changedAny = $true
     }
 }
 $env:OLLAMA_MODELS = $targetPath
 
-# 3. Quick health check: if API already responds AND blobs dir at target has files,
-#    we are already correctly configured.
+# 2b. Set runtime tuning env vars (FA, KV cache type) in the same scope as OLLAMA_MODELS,
+#     so the registry and the running process stay consistent.
+$scope = if ($isAdmin) { 'Machine' } else { 'User' }
+foreach ($k in $runtimeEnv.Keys) {
+    $want = $runtimeEnv[$k]
+    $have = [Environment]::GetEnvironmentVariable($k, $scope)
+    if ($have -ne $want) {
+        Write-Host "Setting $k = $want ($scope scope)"
+        [Environment]::SetEnvironmentVariable($k, $want, $scope)
+        $changedAny = $true
+    }
+    # Also set in current process so the child ollama serve we launch inherits it.
+    Set-Item -Path "env:$k" -Value $want
+}
+# If admin, also clear any conflicting User scope values (User overrides Machine).
+if ($isAdmin) {
+    foreach ($k in $runtimeEnv.Keys) {
+        $userVal = [Environment]::GetEnvironmentVariable($k, 'User')
+        if ($userVal -and $userVal -ne $runtimeEnv[$k]) {
+            Write-Host "Clearing conflicting $k User scope value (was: '$userVal')"
+            [Environment]::SetEnvironmentVariable($k, $null, 'User')
+            $changedAny = $true
+        }
+    }
+}
+
+# 3. Quick health check: skip restart only if API is up, blobs are at target, AND we did
+#    not change any registry value in this run (otherwise the running process is stale).
 $apiUpAlready = $false
 try {
     Invoke-RestMethod -Uri $apiUrl -TimeoutSec 3 | Out-Null
@@ -87,10 +130,13 @@ try {
 $blobsAtTarget = Test-Path (Join-Path $targetPath 'blobs')
 $blobCount = if ($blobsAtTarget) { (Get-ChildItem (Join-Path $targetPath 'blobs') -File -ErrorAction SilentlyContinue).Count } else { 0 }
 
-if ($apiUpAlready -and $blobCount -gt 0) {
-    Write-Host "API already up and blobs already at $targetPath ($blobCount files). No restart needed."
+if ($apiUpAlready -and $blobCount -gt 0 -and -not $changedAny) {
+    Write-Host "API up, blobs at $targetPath ($blobCount files), nothing changed. No restart needed."
     Write-Host 'RESULT: OK'
     exit 0
+}
+if ($changedAny) {
+    Write-Host "Registry env changed in this run, restarting Ollama to apply..."
 }
 
 # 4. Stop any running Ollama (tray, serve, or service)

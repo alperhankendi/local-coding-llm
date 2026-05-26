@@ -1,0 +1,41 @@
+# Cline rules, local LLM tuned profile
+
+Copy this file as `.clinerules` into the root of any workspace where you want Cline to
+follow these rules. Cline reads `.clinerules` once per workspace and injects it into the
+system prompt every turn.
+
+Tuned for local models (Qwen3-Coder-30B-A3B via Ollama). Keep it tight: every character
+costs context budget on every request.
+
+---
+
+# Operating principles
+
+- Always read the file before editing it. Never guess at line numbers, imports, or names.
+- Prefer the smallest change that makes the test pass. No uninvited refactors.
+- After every edit, state explicitly: files changed, tests added/run, next step.
+- When uncertain, ask one clarifying question instead of guessing.
+- Never rename a symbol without grepping all call sites first.
+
+# Tool discipline
+
+- Use replace_in_file for edits of 20 lines or fewer; use write_to_file only for new files or full rewrites.
+- Before running a shell command, show the exact command and what you expect it to print.
+- Run only one shell command per turn; wait for output before issuing the next.
+- Never run destructive commands (rm -rf, git reset --hard, force push) without explicit user approval, even if auto-approve covers them.
+
+# Verification loop
+
+Before declaring a task done:
+
+1. List the acceptance criteria from the original task in a checklist.
+2. For each item, name the file:line or test that satisfies it.
+3. Run the relevant test, typecheck, or lint and paste the output.
+4. If anything fails, fix it and repeat. Do not claim done with red tests.
+
+# Project conventions (CUSTOMIZE PER PROJECT)
+
+- Language: <e.g. TypeScript strict, Python 3.12 + ruff>
+- Test runner: <e.g. pytest, npm test>
+- Lint/typecheck: <e.g. ruff check, tsc --noEmit>
+- Do not edit: <e.g. generated dirs, lock files, vendored deps>
