@@ -32,6 +32,36 @@ After install, configure Cline manually in VSCode:
 1. Click the Cline icon in the activity bar
 2. Set API Provider = Ollama, Base URL = `http://localhost:11434`, Model = `qwen3-coder:30b`
 
+## Measured performance, 2026-05-26 acceptance run
+
+Hardware as above (RTX 4080 16 GB, 32 GB RAM, D:\ SSD).
+
+**qwen3-coder:30b (Q4_K_M, ~17 GB on disk, 14.16 GB VRAM resident):**
+
+| Layer | Result |
+|---|---|
+| test-ollama-health | PASS, VRAM 14.16 GB |
+| test-chat-completion | PASS, 2.61 s end to end |
+| test-tool-calling | PASS, valid `tool_calls` field returned |
+| benchmark-throughput | warm decode avg 55.5 tok/s, warm prefill avg 279 tok/s |
+| benchmark-context, 8K | TTFT 2.97 s, VRAM 15.7 GB |
+| benchmark-context, 32K | TTFT 10.8 s, VRAM 15.5 GB (agent sweet spot) |
+| benchmark-context, 64K | TTFT 29.6 s, VRAM 15.7 GB (works but slow) |
+| validate-coding-tasks | 4 of 4 fixtures PASS, gen 3.7 to 7.2 s each |
+| validate-cline-e2e | 12 of 12 checklist items PASS |
+
+**qwen2.5-coder:1.5b (used for fast pipeline iteration only):**
+
+| Layer | Result |
+|---|---|
+| test-ollama-health | PASS, VRAM 1.31 GB |
+| test-chat-completion | PASS, 3.76 s |
+| test-tool-calling | FAIL (model embeds JSON in content, not `tool_calls` field) |
+| benchmark-throughput | warm decode avg 330 tok/s |
+| validate-coding-tasks | 1 of 4 PASS (model too small for refactor/bug-fix/from-spec, even with input context) |
+
+Use 1.5B for iterating on the validator and scripts. Use 30B for actual coding work and any tool-calling test.
+
 ## Iterating with a small model
 
 Most scripts accept `-Model <name>`. Use a tiny model (~1 GB) to iterate on the pipeline before running expensive tests:

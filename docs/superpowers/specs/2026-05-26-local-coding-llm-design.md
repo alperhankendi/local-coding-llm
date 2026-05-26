@@ -223,20 +223,31 @@ Setup is considered complete when:
 * Layer 3: at least 3 of 4 fixtures pass.
 * Layer 4: manual checklist all checked.
 
-## 9. Open Decisions Deferred to Implementation
+## 9. Open Decisions, Resolved On 2026-05-26 Acceptance Run
 
-The following are intentionally left for the implementation plan to resolve, because they depend on actual measurements on the user's machine:
+All three deferred decisions were resolved during the live acceptance run on the user's RTX 4080:
 
-* Exact Modelfile `num_ctx` value. Default 32768, but may drop if VRAM headroom is tight at 64K.
-* Number of GPU layers to offload. Ollama autodetects, but we may pin if autodetect underuses VRAM.
-* Whether to enable Ollama parallel slots. Default off for single user.
+* **`num_ctx` value.** 32K is the sweet spot for agent use. Measured time to first token: 8K = 2.97 s, 32K = 10.8 s, 64K = 29.57 s. 32K fits comfortably (VRAM 15.5 GB, peak 15.7 GB). 64K technically completes but the 30 s first-token wait is too painful for an agent loop. Use Cline default (likely Ollama default 8K or 32K depending on Modelfile).
+* **GPU layer offload.** Ollama autodetect was correct. No manual pinning needed. Cold load 14.16 GB VRAM, full GPU residency confirmed by `/api/ps` (`size_vram > 0`).
+* **Parallel slots.** Left at default (off) for single user. Not revisited.
 
-## 10. Risks and Mitigations
+Measured throughput, qwen3-coder:30b, Q4_K_M, RTX 4080 16 GB:
 
-| Risk                                                                           | Likelihood | Mitigation                                                                                                                        |
-| ------------------------------------------------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Qwen3-Coder-30B-A3B does not fit in 16 GB at desired context size              | Medium     | Drop quantization to Q3\_K\_M, or reduce context to 16K. Benchmark script will surface this early.                                |
-| Cline's Ollama integration does not parse tool calls correctly for Qwen3-Coder | Low        | `test-tool-calling.ps1` catches this at functional layer. If broken, fall back to Continue.dev which has more permissive parsing. |
-| Ollama Windows service does not honor OLLAMA\_MODELS env var                   | Low        | `02-configure-storage.ps1` verifies after restart that the new path is in use, fails loud if not.                                 |
-| Throughput below 20 tokens per second despite the model fitting                | Medium     | Profile with `nvidia-smi`. Common cause: wrong CUDA driver. Fallback: pin GPU layers manually.                                    |
+| Metric | Value |
+|---|---|
+| Cold load wall time | 23.8 s (model into VRAM) plus 10.56 s for first prompt |
+| Warm prefill avg | 279 tok/s |
+| Warm decode avg | 55.5 tok/s |
+| VRAM resident | 14.16 GB |
+
+## 10. Risks and Mitigations, with Acceptance Outcomes
+
+| Risk | Predicted | Materialized? | Outcome and notes |
+|---|---|---|---|
+| Qwen3-Coder-30B-A3B does not fit in 16 GB at desired context size | Medium | Partial | 32K fits cleanly (15.5 GB). 64K technically completes but TTFT is 29.6 s, impractical for agent use. Recommendation: pick 32K, do not try 64K in production. |
+| Cline's Ollama integration does not parse tool calls correctly for Qwen3-Coder | Low | No | `test-tool-calling.ps1` confirmed `tool_calls` field is returned correctly. Cline e2e walkthrough confirmed the file-create, terminal-execute, and edit flows all work. |
+| Ollama Windows service does not honor OLLAMA_MODELS env var | Low | YES, much bigger than predicted | The Ollama tray app inherits its environment from login time, not from runtime registry changes. PowerShell's `Start-Process` did not propagate runtime env changes either. The fix was non-trivial: kill the tray, launch `ollama serve` ourselves via .NET `ProcessStartInfo` with an explicit `Environment` dictionary, and for reboot persistence set `OLLAMA_MODELS` in Machine scope (admin once). Also discovered that `OLLAMA_MODELS` points at the models directory itself (containing `blobs\` and `manifests\` directly), NOT a parent containing `models\`. See [docs/superpowers/notes/2026-05-26-debug-lessons.md](../notes/2026-05-26-debug-lessons.md). |
+| Throughput below 20 tokens per second despite the model fitting | Medium | No | Measured warm decode 55.5 tok/s, comfortably above threshold. CUDA detection worked first try, no manual layer pinning needed. |
+| Validator parser does not capture model output format | Not anticipated | YES | 30B omitted triple-backtick fences when told "no prose outside code blocks" (took the instruction literally, no fences = no extra text). Required (a) strengthening system prompt to mandate fences explicitly, (b) adding a raw-mode fallback parser that detects `# filename.ext\n<code>` sections without fences, and (c) including input/ file contents in the prompt so refactor and bug-fix tasks have context. After fixes, 4/4 fixtures pass. |
+| Small models (1.5B class) cannot do OpenAI-standard tool calling | Not anticipated | YES | `qwen2.5-coder:1.5b` (used as a fast iteration target) embeds the call as JSON inside `message.content` rather than using the `tool_calls` field. Cline cannot parse this fallback. Test scripts now document that tool calling needs a 7B+ model. |
 
